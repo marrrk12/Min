@@ -1,10 +1,10 @@
 package com.example.min
 
-import android.Manifest
 import android.content.pm.PackageManager
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
 import android.os.Build
 import android.os.Bundle
-import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -16,32 +16,66 @@ import com.google.android.gms.location.Priority
 import com.squareup.picasso.Picasso
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.IOException
+import java.sql.SQLException
 
 
 class MainActivity : AppCompatActivity() {
+
+    // Переменная для работы с БД
+    private lateinit var mDBHelper: DatabaseHelper
+    private lateinit var mDb: SQLiteDatabase
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var  countyofuser: TextView
     private lateinit var  street: TextView
     private lateinit var  listView: ListView
-    private  lateinit var img_of_county : ImageView
+    private lateinit var img_of_county : ImageView
+    private var arr_of_place : Array<String> =  arrayOf("undefined", "undefined", "undefined")
+
+    private var address: Address? = Address("undefined",
+        "undefined","undefined","undefined","undefined","undefined")
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        listView = findViewById(R.id.listView)
+
         countyofuser = findViewById(R.id.textView)
-        street = findViewById(R.id.textView2)
+        //street = findViewById(R.id.textView2)
         img_of_county = findViewById(R.id.img_of_county)
         requestPermission()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        getLoc()
 
-        listView = findViewById(R.id.listView)
+        mDBHelper = DatabaseHelper(this)
+
+        try {
+            mDBHelper.updateDataBase()
+        } catch (mIOException: IOException) {
+            throw Error("UnableToUpdateDatabase")
+        }
+
+        mDb = try {
+            mDBHelper.getWritableDatabase()
+        } catch (mSQLException: SQLException) {
+            throw mSQLException
+        }
+
+        //getLoc()
+
+
+
+        //setPicture()
+
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            getLoc()
+        }
         listView.adapter =
-            ArrayAdapter(this, android.R.layout.simple_list_item_1, arrayOf("1", "2", "3"))
+            ArrayAdapter(this, android.R.layout.simple_list_item_1, arr_of_place)
 
-        setPicture()
+        val i = 0
 
     }
 
@@ -52,18 +86,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
         fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).addOnSuccessListener {
-            lifecycleScope.launch(Dispatchers.Main)
+            lifecycleScope.launch(Dispatchers.IO)
             {
-//                countyofuser.text = it.latitude.toString()
-//                street.text = it.longitude.toString()
-                launch (Dispatchers.IO)
+                address = getPlace(it.latitude, it.longitude)
+                launch(Dispatchers.Main)
                 {
-                    val address = getPlace(it.latitude, it.longitude)
-                    launch(Dispatchers.Main)
-                    {
-                        countyofuser.text = address?.county ?: address?.village ?: "NoFind"
-
-                    }
+                    countyofuser.text ="Вы прибываете в: " + address?.county ?: "undefined"
+                    if (countyofuser.text != "undefined")
+                        setPicture()
                 }
             }
         }
@@ -71,25 +101,47 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun setPicture() {
-
+        var mDrawableName = ""
+        var mNameId = ""
+        var mNamecounty = ""
+        val county = address?.county
         lifecycleScope.launch(Dispatchers.IO)
         {
-            val listImageUrl: ArrayList<Image> = ArrayList()
-            val searchImageApi = RetrofitHelperImage.getInstance().create(SearchImageApi::class.java)
-            val countyofuser1 = "Иглинский район"
-            val result = searchImageApi.getPicture(countyofuser1.toString()+" карта")
-            if (result != null && result.isSuccessful && result.body()?.items != null) {
-                listImageUrl.addAll(result.body()!!.items)
-            }
 
+            val cursor: Cursor = mDb.rawQuery("SELECT * FROM table_of_rngr WHERE name = '$county'", null)
+            cursor.moveToFirst()
+
+//            while (!cursor.isAfterLast) {
+                mNamecounty = cursor.getString(0)
+                mDrawableName = cursor.getString(1)
+
+//                cursor.moveToNext()
+//            }
+            cursor.close()
+
+            val i = 0
+
+
+            val cursor2: Cursor = mDb.rawQuery("SELECT * FROM table_of_places WHERE id = (SELECT id_pl FROM table_of_rngr WHERE name = '" + county + "')", null)
+            cursor2.moveToFirst()
+
+            while (!cursor2.isAfterLast) {
+                arr_of_place = arrayOf(cursor2.getString(1),cursor2.getString(2),cursor2.getString(3))
+                cursor2.moveToNext()
+            }
+            cursor2.close()
+
+            val resID = resources.getIdentifier(mDrawableName, "drawable", packageName)
             lifecycleScope.launch(Dispatchers.Main)
             {
                 Picasso.get()
-                    .load(listImageUrl[0].link)
+                    .load(resID)
                     .into(img_of_county)
+
             }
         }
     }
+
 
     private suspend fun getPlace(late: Double, long: Double): Address? {
         val addressApi = RetrofitHelperSight.getInstance().create(AddressApi::class.java)
